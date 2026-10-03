@@ -27,8 +27,9 @@ Surrounding backticks, quotes, brackets and trailing punctuation are stripped, a
 Opening whatever lands on the clipboard is risky, so it is deliberately narrow:
 
 - **Whole-text match only.** Selecting a sentence that contains a path does nothing.
-- **Source app filter.** Only copies from terminals and editors count (Windows Terminal, conhost, WezTerm, Alacritty, mintty, Tabby, VS Code, Cursor, Windsurf, Claude). Copying a link in a browser or chat app to paste elsewhere does not open it.
+- **Source app filter.** The copying app is read from the clipboard owner in the same step as the text. Only copies from terminals and editors count (Windows Terminal, conhost, WezTerm, Alacritty, mintty, Tabby, VS Code, Cursor, Windsurf, Claude). Copying a link in a browser or chat app to paste elsewhere does not open it, and a copy whose owner is unknown is ignored.
 - **Allowed roots.** Paths must exist under an allowed folder (default: your user profile). `..` and junctions/symlinks are resolved before the check.
+- **No network access.** Mapped network drives and links that lead to a share are rejected by reading the links themselves, before anything follows them.
 - **Never runs anything.** Executable, script and macro types are only revealed in Explorer. NTFS alternate data streams (`x.exe::$DATA`) and UNC paths (`\\server\share`, which can leak NTLM credentials) are rejected without touching them.
 - **No shell.** Explorer is started by absolute path, VS Code through a URI (`code.cmd` would re-parse arguments).
 - Content already on the clipboard at startup is ignored, and the same text copied repeatedly within 2 seconds opens once.
@@ -49,7 +50,7 @@ Tray menu: Pause / Open settings / Open log / Quit.
   "open_urls": true,
   "allowed_roots": ["~"],
   "source_apps": ["windowsterminal.exe", "code.exe", "..."],
-  "reveal_extensions": [".bat", ".exe", "..."]
+  "reveal_extensions": []
 }
 ```
 
@@ -58,7 +59,9 @@ Tray menu: Pause / Open settings / Open log / Quit.
 | `open_urls` | `false` to stop opening http(s) links |
 | `allowed_roots` | Folders paths must be under (`~` = user profile) |
 | `source_apps` | Exe names a copy must come from. `[]` = any app |
-| `reveal_extensions` | Types that are only revealed, never opened |
+| `reveal_extensions` | Extra types to only reveal. The built-in list always applies |
+
+An invalid file (bad JSON, wrong type, relative root) never widens the rules: the last valid settings stay in effect, and if there were none yet, nothing opens until the file is fixed. The reason is written to the log.
 
 The log (`%APPDATA%\clipboard_link_opener\app.log`) records what was opened or rejected and why.
 
@@ -70,6 +73,13 @@ Requires Windows 10/11 and Python 3.10+.
 pip install -r requirements.txt
 python -m pytest -q
 build.bat
+```
+
+Optional tests that use the real clipboard (they overwrite it; only plain text is restored):
+
+```cmd
+set CLO_LIVE_CLIPBOARD=1
+python -m pytest -q tests/test_watcher_live.py
 ```
 
 `build.bat` produces `build\clipboard_link_opener.exe` (PyInstaller). `pythonw run.py` runs it without building.
@@ -92,4 +102,6 @@ MIT
 - 対象はターミナルとエディタでコピーしたものだけで、ブラウザやチャットアプリでのコピーは無視します。
 - 存在するパスで、許可したフォルダの下にあるものだけを開きます。
 - 実行ファイル・スクリプト・マクロ付き文書は開かず、Explorer で選択して見せるだけです。
+- ネットワークドライブや、共有フォルダにつながるリンクは開きません（リンクをたどる前に判定します）。
+- 設定ファイルが壊れていても許可範囲は広がりません（直前の正しい設定を使い続けます）。
 - 設定は `%APPDATA%\clipboard_link_opener\config.json` にあり、URL を開かないようにするなら `open_urls: false` にします。

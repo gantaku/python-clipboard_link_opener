@@ -50,10 +50,15 @@ def normalize(text: str | None, home: Path) -> Target | None:
     if _URL_RE.match(candidate):
         return Target(kind="url", url=candidate)
     if candidate.lower().startswith("file:"):
-        candidate = _file_uri_to_path(candidate)
-        if candidate is None:
+        # The line comes only from the URI fragment; a decoded "%23L10" is part of the name.
+        parsed = _file_uri_to_path(candidate)
+        if parsed is None:
             return None
-    path_text, line = _split_line_suffix(candidate)
+        path_text, line = parsed
+    else:
+        path_text, line = _split_line_suffix(candidate)
+        # `"C:\a.md":42` -> quotes remain around the path once the line is split off.
+        path_text = _clean(path_text) if line is not None else path_text
     path = _to_windows_path(path_text, home)
     if path is None:
         return None
@@ -86,21 +91,25 @@ def _clean(text: str) -> str:
     return text
 
 
-def _file_uri_to_path(uri: str) -> str | None:
+def _file_uri_to_path(uri: str) -> tuple[str, int | None] | None:
     parts = urlsplit(uri)
     if parts.scheme.lower() != "file":
         return None
     path = unquote(parts.path)
+    line = None
     if parts.fragment:
-        line = re.fullmatch(r"L(\d+)", parts.fragment)
-        path += f":{line.group(1)}" if line else "#" + unquote(parts.fragment)
+        match = re.fullmatch(r"L(\d+)", parts.fragment)
+        if match:
+            line = int(match.group(1))
+        else:
+            path += "#" + unquote(parts.fragment)
     host = parts.netloc
     if host and host.lower() != "localhost":
-        return "\\\\" + host + path.replace("/", "\\")
+        return "\\\\" + host + path.replace("/", "\\"), line
     # "/C:/Users/..." -> "C:/Users/..."
     if re.match(r"^/[A-Za-z]:", path):
         path = path[1:]
-    return path
+    return path, line
 
 
 def _split_line_suffix(text: str) -> tuple[str, int | None]:
@@ -116,8 +125,7 @@ def _split_line_suffix(text: str) -> tuple[str, int | None]:
 
 
 def _to_windows_path(text: str, home: Path) -> Path | None:
-    if " " in text and not _DRIVE_RE.match(text) and not text.startswith("~"):
-        return None
+    # Spaces are fine: only whole-text matches that start like a path get here.
     if text == "~":
         return home
     if text.startswith(("~/", "~\\")):

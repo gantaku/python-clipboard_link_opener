@@ -10,7 +10,13 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from src import __version__
-from src.config import app_dir, load_config, load_obsidian_vaults, obsidian_config_path
+from src.config import (
+    ConfigError,
+    app_dir,
+    load_config,
+    load_obsidian_vaults,
+    obsidian_config_path,
+)
 from src.normalize import normalize
 from src.opener import launch, plan_launch
 from src.policy import decide, source_allowed
@@ -23,35 +29,45 @@ ERROR_ALREADY_EXISTS = 183
 
 
 class Handler:
-    """Clipboard text -> normalize -> policy -> launch. Reloads config when it changes."""
+    """Clipboard text -> normalize -> source/policy -> dedup -> launch.
+
+    Settings and the Obsidian vault list are reloaded when either file changes.
+    An invalid settings file never widens the policy: the last good one stays,
+    and nothing opens until the first valid one is read.
+    """
 
     def __init__(self, config_path: Path, home: Path):
         self._config_path = config_path
         self._home = home
         self._dedup = Deduper()
-        self._mtime: float | None = None
+        self._loaded_key: tuple | None = None
         self._policy = None
         self._vaults: tuple[Path, ...] = ()
         self.paused = threading.Event()
         self._reload_if_changed()
 
     def __call__(self, text: str, source: str | None = None) -> None:
-        if self.paused.is_set() or not self._dedup.should_fire(text):
+        if self.paused.is_set():
             return
         target = normalize(text, self._home)
         if target is None:
             return
         self._reload_if_changed()
+        shown = target.url or str(target.path)
+        if self._policy is None:
+            log.warning("ignored (no valid settings yet): %s", shown)
+            return
         if not source_allowed(source, self._policy):
-            log.info("ignored (copied from %s): %s", source, target.url or target.path)
+            log.info("ignored (copied from %s): %s", source, shown)
             return
         decision = decide(target, self._policy)
-        shown = target.url or str(target.path)
         if decision.action == "reject":
             log.info("rejected (%s): %s", decision.reason, shown)
             return
         plan = plan_launch(decision, self._vaults)
-        if plan is None:
+        # Dedup only what is about to open, so an ignored or rejected copy
+        # never suppresses the next real one (Codex review #6).
+        if plan is None or not self._dedup.should_fire(shown):
             return
         try:
             launch(plan)
@@ -59,25 +75,41 @@ class Handler:
         except (OSError, ValueError) as error:
             log.warning("launch failed for %s: %s", shown, error)
 
+    def _change_key(self) -> tuple:
+        return (_mtime_ns(self._config_path), _mtime_ns(obsidian_config_path()))
+
     def _reload_if_changed(self) -> None:
-        try:
-            mtime = self._config_path.stat().st_mtime
-        except OSError:
-            mtime = None
-        if self._policy is not None and mtime == self._mtime:
+        before = self._change_key()
+        if before == self._loaded_key:
             return
-        self._policy = load_config(self._config_path, self._home)
-        self._vaults = load_obsidian_vaults(obsidian_config_path())
         try:
-            self._mtime = self._config_path.stat().st_mtime
-        except OSError:
-            self._mtime = None
-        log.info(
-            "config loaded: roots=%s open_urls=%s vaults=%d",
-            [str(r) for r in self._policy.allowed_roots],
-            self._policy.open_urls,
-            len(self._vaults),
-        )
+            policy = load_config(self._config_path, self._home)
+        except ConfigError as error:
+            kept = "keeping the previous settings" if self._policy else "nothing will open"
+            log.error("invalid settings (%s); %s", error, kept)
+            policy = None
+        vaults = load_obsidian_vaults(obsidian_config_path())
+        if policy is not None:
+            self._policy = policy
+        self._vaults = vaults
+        # A save during the read leaves the key unrecorded, so the next copy reloads.
+        after = self._change_key()
+        self._loaded_key = after if after == before and policy is not None else None
+        if policy is not None:
+            log.info(
+                "config loaded: roots=%s open_urls=%s sources=%d vaults=%d",
+                [str(r) for r in policy.allowed_roots],
+                policy.open_urls,
+                len(policy.source_apps),
+                len(vaults),
+            )
+
+
+def _mtime_ns(path: Path) -> int | None:
+    try:
+        return path.stat().st_mtime_ns
+    except OSError:
+        return None
 
 
 def setup_logging(directory: Path) -> Path:

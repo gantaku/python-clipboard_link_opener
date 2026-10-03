@@ -25,6 +25,11 @@ DEFAULT_REVEAL_EXTENSIONS = frozenset(
     }
 )  # fmt: skip
 
+FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+DRIVE_FIXED = 3
+DRIVE_REMOTE = 4
+MAX_LINK_DEPTH = 8
+
 Action = Literal["open", "folder", "reveal", "url", "reject"]
 
 
@@ -49,7 +54,9 @@ def decide(
     policy: Policy,
     exists: Callable[[str], bool] = os.path.exists,
     is_dir: Callable[[str], bool] = os.path.isdir,
+    network_check: Callable[[str], str | None] | None = None,
 ) -> Decision:
+    network_check = network_check or network_hop
     if target.kind == "url":
         if policy.open_urls:
             return Decision("url", target)
@@ -64,9 +71,13 @@ def decide(
         # NTFS alternate data streams ("x.exe::$DATA") hide the real extension.
         return Decision("reject", target, "alternate data streams are not allowed")
 
+    hop = network_check(raw)
+    if hop is not None:
+        # Checked before realpath(): resolving would already contact the server.
+        return Decision("reject", target, hop)
+
     resolved = _canonical(raw)
     if resolved.startswith("\\\\"):
-        # A junction/symlink pointing at a share.
         return Decision("reject", target, "UNC paths are not allowed")
     if not any(
         _is_within(resolved, _canonical(str(root))) for root in policy.allowed_roots
@@ -90,6 +101,64 @@ def source_allowed(source: str | None, policy: Policy) -> bool:
     if not policy.source_apps:
         return True
     return source is not None and source.lower() in policy.source_apps
+
+
+def network_hop(
+    path: str,
+    lstat: Callable = os.lstat,
+    readlink: Callable[[str], str] = os.readlink,
+    drive_type: Callable[[str], int] | None = None,
+    _depth: int = 0,
+) -> str | None:
+    """Reason string if reaching ``path`` would touch the network, else None.
+
+    Walks each component with lstat/readlink, which read the link itself and
+    never follow it, so a link to a share is caught before anything contacts it.
+    """
+    drive_type = drive_type or _drive_type
+    if _depth > MAX_LINK_DEPTH:
+        return "too many links"
+    full = os.path.abspath(path)
+    if full.startswith(("\\\\", "//")):
+        return "UNC paths are not allowed"
+    drive, rest = os.path.splitdrive(full)
+    if drive_type(drive + "\\") == DRIVE_REMOTE:
+        return "network drives are not allowed"
+    parts = [part for part in rest.split("\\") if part]
+    current = drive + "\\"
+    for index, part in enumerate(parts):
+        current = os.path.join(current, part)
+        try:
+            attributes = getattr(lstat(current), "st_file_attributes", 0)
+        except OSError:
+            return None  # missing; the existence check rejects it later
+        if not attributes & FILE_ATTRIBUTE_REPARSE_POINT:
+            continue
+        try:
+            link = _strip_nt_prefix(readlink(current))
+        except OSError:
+            continue  # reparse point that is not a link (e.g. OneDrive placeholder)
+        if not os.path.isabs(link) and not link.startswith("\\\\"):
+            link = os.path.join(os.path.dirname(current), link)
+        remaining = os.path.join(link, *parts[index + 1 :])
+        return network_hop(remaining, lstat, readlink, drive_type, _depth + 1)
+    return None
+
+
+def _strip_nt_prefix(link: str) -> str:
+    for prefix in ("\\\\?\\UNC\\", "\\??\\UNC\\"):
+        if link.upper().startswith(prefix):
+            return "\\\\" + link[len(prefix) :]
+    for prefix in ("\\\\?\\", "\\??\\"):
+        if link.startswith(prefix):
+            return link[len(prefix) :]
+    return link
+
+
+def _drive_type(root: str) -> int:
+    import ctypes
+
+    return ctypes.windll.kernel32.GetDriveTypeW(root)
 
 
 def _canonical(path: str) -> str:

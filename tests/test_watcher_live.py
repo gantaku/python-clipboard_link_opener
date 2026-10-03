@@ -1,21 +1,31 @@
-"""ClipboardWatcher against the real Windows clipboard (content is restored)."""
+"""ClipboardWatcher against the real Windows clipboard.
 
+Opt-in: these overwrite the clipboard (only plain text is put back), so they run
+only with CLO_LIVE_CLIPBOARD=1. The regular suite covers the watcher with fakes.
+"""
+
+import os
+import subprocess
 import sys
 import threading
+from pathlib import Path
 
 import pytest
 
 pytestmark = pytest.mark.skipif(
-    sys.platform != "win32", reason="Windows clipboard only"
+    sys.platform != "win32" or os.environ.get("CLO_LIVE_CLIPBOARD") != "1",
+    reason="set CLO_LIVE_CLIPBOARD=1 to run real clipboard tests (Windows only)",
 )
 
-
+# Writes from another process, as a real copy does. With OWNED=1 the clipboard is
+# opened with a real window, so that window's process becomes the owner.
 _WRITER = """
-import sys, time, pywintypes, win32clipboard, win32con
+import os, sys, time, pywintypes, win32clipboard, win32con, win32gui
 text = sys.stdin.read()
+hwnd = win32gui.CreateWindowEx(0, "STATIC", "", 0, 0, 0, 0, 0, 0, 0, 0, None) if os.environ.get("OWNED") == "1" else None
 for _ in range(50):
     try:
-        win32clipboard.OpenClipboard()
+        win32clipboard.OpenClipboard(hwnd)
         break
     except pywintypes.error:
         time.sleep(0.02)
@@ -29,16 +39,14 @@ finally:
 """
 
 
-def set_clipboard(text: str) -> None:
-    # Write from another process, as a real copy does. In-process writes share the
-    # NULL-window clipboard open with the watcher thread and close each other.
-    import subprocess
-
+def set_clipboard(text: str, owned: bool = False) -> None:
+    env = {**os.environ, "OWNED": "1" if owned else "0"}
     subprocess.run(
         [sys.executable, "-c", _WRITER],
         input=text,
         text=True,
         encoding="utf-8",
+        env=env,
         check=True,
     )
 
@@ -56,58 +64,36 @@ def saved_clipboard():
         set_clipboard(original)
 
 
-def test_new_copy_is_delivered_but_existing_content_is_not(saved_clipboard):
+def wait_for(received, count, timeout=2.0):
+    event = threading.Event()
+    for _ in range(int(timeout / 0.05)):
+        if len(received) >= count:
+            return True
+        event.wait(0.05)
+    return len(received) >= count
+
+
+def test_new_copy_is_delivered_with_owner_but_existing_content_is_not(saved_clipboard):
     from src.watcher import ClipboardWatcher
 
     set_clipboard("before-start")
     received = []
-    got = threading.Event()
-
-    def on_text(text, source=None):
-        received.append(text)
-        got.set()
-
-    watcher = ClipboardWatcher(on_text, poll=0.02)
+    watcher = ClipboardWatcher(
+        lambda text, source: received.append((text, source)), poll=0.02
+    )
     watcher.start()
     try:
         threading.Event().wait(0.1)
-        set_clipboard("after-start")
-        assert got.wait(2.0)
+        set_clipboard("after-start", owned=True)
+        assert wait_for(received, 1)
     finally:
         watcher.stop()
         watcher.join(2.0)
-    assert received == ["after-start"]
+    assert received == [("after-start", Path(sys.executable).name.lower())]
 
 
-def test_handler_exception_does_not_stop_watching(saved_clipboard):
-    from src.watcher import ClipboardWatcher
+def test_unknown_owner_gives_no_source(saved_clipboard):
+    from src.watcher import read_clipboard
 
-    received = []
-    second = threading.Event()
-
-    def on_text(text, source=None):
-        received.append(text)
-        if len(received) == 1:
-            raise RuntimeError("boom")
-        second.set()
-
-    watcher = ClipboardWatcher(on_text, poll=0.02)
-    watcher.start()
-    try:
-        threading.Event().wait(0.1)
-        set_clipboard("one")
-        threading.Event().wait(0.2)
-        set_clipboard("two")
-        assert second.wait(2.0)
-    finally:
-        watcher.stop()
-        watcher.join(2.0)
-    assert received == ["one", "two"]
-
-
-def test_clipboard_source_is_an_exe_name(saved_clipboard):
-    from src.watcher import clipboard_source
-
-    set_clipboard("source-check")
-    source = clipboard_source()
-    assert source is None or (source.endswith(".exe") and source == source.lower())
+    set_clipboard("no-owner", owned=False)
+    assert read_clipboard() == ("no-owner", None)

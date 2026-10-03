@@ -30,50 +30,41 @@ def obsidian_config_path() -> Path:
     return Path(os.environ.get("APPDATA", Path.home())) / "obsidian" / "obsidian.json"
 
 
+class ConfigError(ValueError):
+    """The settings file is unreadable or invalid. Callers keep the last good policy."""
+
+
 def default_settings() -> dict:
     return {
         "open_urls": True,
         "allowed_roots": list(DEFAULT_ROOTS),
         "source_apps": list(DEFAULT_SOURCE_APPS),
-        "reveal_extensions": sorted(DEFAULT_REVEAL_EXTENSIONS),
+        # Added to the built-in list, which always applies.
+        "reveal_extensions": [],
     }
 
 
 def load_config(path: Path, home: Path) -> Policy:
+    """Strict: any invalid value raises ConfigError instead of falling back to a wider default."""
     data = _read_or_create(path)
     defaults = default_settings()
+    settings = {key: data.get(key, value) for key, value in defaults.items()}
 
-    open_urls = data.get("open_urls", defaults["open_urls"])
-    if not isinstance(open_urls, bool):
-        log.warning("config: open_urls must be true/false; using default")
-        open_urls = defaults["open_urls"]
+    if not isinstance(settings["open_urls"], bool):
+        raise ConfigError("open_urls must be true or false")
+    for key in ("allowed_roots", "source_apps", "reveal_extensions"):
+        if not _is_str_list(settings[key]):
+            raise ConfigError(f"{key} must be a list of strings")
 
-    roots = data.get("allowed_roots", defaults["allowed_roots"])
-    if not _is_str_list(roots):
-        log.warning("config: allowed_roots must be a list of strings; using default")
-        roots = defaults["allowed_roots"]
+    roots = tuple(_expand(r, home) for r in settings["allowed_roots"])
+    if any(not r.strip() for r in settings["allowed_roots"]) or not all(r.is_absolute() for r in roots):
+        raise ConfigError("allowed_roots entries must be absolute paths or start with ~")
 
-    exts = data.get("reveal_extensions", defaults["reveal_extensions"])
-    if not _is_str_list(exts):
-        log.warning(
-            "config: reveal_extensions must be a list of strings; using default"
-        )
-        exts = defaults["reveal_extensions"]
-
-    apps = data.get("source_apps", defaults["source_apps"])
-    if not _is_str_list(apps):
-        log.warning("config: source_apps must be a list of strings; using default")
-        apps = defaults["source_apps"]
-
-    expanded = tuple(_expand(r, home) for r in roots if r.strip())
-    absolute = tuple(r for r in expanded if r.is_absolute())
-    if len(absolute) != len(roots):
-        log.warning("config: relative or empty allowed_roots entries were skipped")
     return Policy(
-        allowed_roots=absolute,
-        open_urls=open_urls,
-        reveal_extensions=frozenset(e.lower() for e in exts),
-        source_apps=frozenset(a.lower() for a in apps),
+        allowed_roots=roots,
+        open_urls=settings["open_urls"],
+        reveal_extensions=DEFAULT_REVEAL_EXTENSIONS | {e.lower() for e in settings["reveal_extensions"]},
+        source_apps=frozenset(a.lower() for a in settings["source_apps"]),
     )
 
 
@@ -102,9 +93,10 @@ def _read_or_create(path: Path) -> dict:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
-        log.warning("config: cannot read %s (%s); using defaults", path, error)
-        return {}
-    return data if isinstance(data, dict) else {}
+        raise ConfigError(f"cannot read {path}: {error}") from error
+    if not isinstance(data, dict):
+        raise ConfigError("the settings file must be a JSON object")
+    return data
 
 
 def _is_str_list(value) -> bool:

@@ -3,7 +3,9 @@
 import json
 from pathlib import Path
 
-from src.config import DEFAULT_ROOTS, load_config, load_obsidian_vaults
+import pytest
+
+from src.config import DEFAULT_ROOTS, ConfigError, load_config, load_obsidian_vaults
 from src.watcher import Deduper
 
 HOME = Path(r"C:\Users\me")
@@ -69,25 +71,36 @@ def test_config_values_are_read(tmp_path):
     policy = load_config(path, HOME)
     assert policy.open_urls is False
     assert policy.allowed_roots == (HOME / "x", Path(r"D:\data"))
-    assert policy.reveal_extensions == frozenset({".foo"})
+    # User entries are added to the built-in list, never replace it (Codex review #2).
+    assert ".foo" in policy.reveal_extensions
+    assert ".bat" in policy.reveal_extensions
 
 
-def test_broken_config_falls_back_to_defaults(tmp_path):
+def test_broken_config_raises_instead_of_widening(tmp_path):
     path = tmp_path / "config.json"
     path.write_text("{not json", encoding="utf-8")
-    policy = load_config(path, HOME)
-    assert policy.open_urls is True
+    with pytest.raises(ConfigError):
+        load_config(path, HOME)
     assert path.read_text(encoding="utf-8") == "{not json"
 
 
-def test_wrong_types_fall_back_per_field(tmp_path):
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"open_urls": "yes"},
+        {"allowed_roots": "~/x"},
+        {"allowed_roots": ["foo"]},
+        {"allowed_roots": [""]},
+        {"source_apps": "code.exe"},
+        {"reveal_extensions": [1]},
+        ["not", "an", "object"],
+    ],
+)
+def test_invalid_values_raise(tmp_path, data):
     path = tmp_path / "config.json"
-    path.write_text(
-        json.dumps({"open_urls": "yes", "allowed_roots": "~/x"}), encoding="utf-8"
-    )
-    policy = load_config(path, HOME)
-    assert policy.open_urls is True
-    assert policy.allowed_roots == (HOME,)
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ConfigError):
+        load_config(path, HOME)
 
 
 def test_obsidian_vaults_are_read(tmp_path):
@@ -113,10 +126,6 @@ def test_obsidian_missing_or_broken_returns_empty(tmp_path):
     assert load_obsidian_vaults(broken) == ()
 
 
-def test_relative_and_empty_roots_are_skipped(tmp_path):
-    path = tmp_path / "config.json"
-    path.write_text(json.dumps({"allowed_roots": ["foo", "", "~/x"]}), encoding="utf-8")
-    assert load_config(path, HOME).allowed_roots == (HOME / "x",)
 
 
 def test_source_apps_default_and_override(tmp_path):
