@@ -1,58 +1,95 @@
 # Clipboard Link Opener
 
-コピーしたローカルファイルのパス（と http(s) の URL）を、貼り付けずにそのまま開く Windows 常駐ツール。
-Claude Code が平文で出すパスを、Windows Terminal で選択（= コピー）するだけで開けるようにする。
+A tiny Windows tray app that **opens a local file path or URL the moment you copy it** — no pasting into Explorer or the Run box.
 
-## 使い方
+Built for AI coding tools (Claude Code, Codex, …) that print file paths as plain text in the terminal. With Windows Terminal's `copyOnSelect`, selecting a path is enough to open it.
 
-1. `build\clipboard_link_opener.exe` を起動する（`pythonw run.py` でも可）。タスクトレイに青いアイコンが出る
-2. パスだけを選択してコピーすると開く
+[日本語](#日本語)
 
-| コピーしたもの | 開き方 |
+## How it works
+
+Copy a path (or select it in Windows Terminal) and it opens:
+
+| Copied text | Opens with |
 |---|---|
-| http(s) の URL | 既定のブラウザ |
-| フォルダ | Explorer |
-| 行番号つき（`app.py:42` `app.py#L42`） | VS Code でその行 |
-| Obsidian の vault 内の `.md` | Obsidian |
-| 実行系（.exe .bat .ps1 .py など） | 開かずに Explorer で選択表示 |
-| それ以外のファイル | 既定のアプリ |
+| `https://…` / `http://…` | Default browser |
+| A folder | Explorer |
+| `app.py:42`, `app.py:42:7`, `app.py#L42` | VS Code at that line (`vscode://` URI) |
+| `.md` inside an Obsidian vault | Obsidian |
+| Executables / scripts / macro documents (`.exe .bat .ps1 .py .lnk .docm …`) | **Not opened** — Explorer shows the file selected |
+| Any other file | Default app |
 
-受け付ける表記: `C:\...` / `C:/...` / `~/...` / `/c/...` / `/mnt/c/...` / `file:///C:/...`。
-前後のバッククォート・引用符・括弧・句読点、端末の折り返し改行は取り除く。
+Accepted notations: `C:\…`, `C:/…`, `~/…`, `/c/…` (Git Bash), `/mnt/c/…` (WSL), `file:///C:/…`.
+Surrounding backticks, quotes, brackets and trailing punctuation are stripped, and paths hard-wrapped by the terminal are joined.
 
-開かないもの: 文章の一部・相対パス・存在しないパス・許可ルートの外・UNC（`\\server\...`）・同じ文字列の 2 秒以内の再コピー。
+## Safety
 
-## トレイメニュー
+Opening whatever lands on the clipboard is risky, so it is deliberately narrow:
 
-一時停止 / 設定ファイルを開く / ログを開く / 終了
+- **Whole-text match only.** Selecting a sentence that contains a path does nothing.
+- **Source app filter.** Only copies from terminals and editors count (Windows Terminal, conhost, WezTerm, Alacritty, mintty, Tabby, VS Code, Cursor, Windsurf, Claude). Copying a link in a browser or chat app to paste elsewhere does not open it.
+- **Allowed roots.** Paths must exist under an allowed folder (default: your user profile). `..` and junctions/symlinks are resolved before the check.
+- **Never runs anything.** Executable, script and macro types are only revealed in Explorer. NTFS alternate data streams (`x.exe::$DATA`) and UNC paths (`\\server\share`, which can leak NTLM credentials) are rejected without touching them.
+- **No shell.** Explorer is started by absolute path, VS Code through a URI (`code.cmd` would re-parse arguments).
+- Content already on the clipboard at startup is ignored, and the same text copied repeatedly within 2 seconds opens once.
 
-## 設定
+## Install
 
-`%APPDATA%\clipboard_link_opener\config.json`（初回起動で作られる。保存すると次のコピーから反映）
+1. Build `build\clipboard_link_opener.exe` with `build.bat` (see below) and run it, or run `pythonw run.py`. A blue icon appears in the tray.
+2. To start with Windows: press `Win + R`, enter `shell:startup`, and put a shortcut to the exe there.
+
+Tray menu: Pause / Open settings / Open log / Quit.
+
+## Settings
+
+`%APPDATA%\clipboard_link_opener\config.json` is created on first run. Changes apply from the next copy.
 
 ```json
 {
   "open_urls": true,
-  "allowed_roots": ["~/knowledge", "~/workspaces", "~/.claude", "~/Downloads"],
+  "allowed_roots": ["~"],
+  "source_apps": ["windowsterminal.exe", "code.exe", "..."],
   "reveal_extensions": [".bat", ".exe", "..."]
 }
 ```
 
-- URL を開くのをやめる: `"open_urls": false`
-- 開いてよい場所を足す: `allowed_roots` に追加
+| Key | Meaning |
+|---|---|
+| `open_urls` | `false` to stop opening http(s) links |
+| `allowed_roots` | Folders paths must be under (`~` = user profile) |
+| `source_apps` | Exe names a copy must come from. `[]` = any app |
+| `reveal_extensions` | Types that are only revealed, never opened |
 
-ログ: `%APPDATA%\clipboard_link_opener\app.log`（開いた・拒否した理由が残る）
+The log (`%APPDATA%\clipboard_link_opener\app.log`) records what was opened or rejected and why.
 
-## スタートアップに登録する
+## Build / test
 
-1. `Win + R` → `shell:startup` で開いたフォルダに
-2. `build\clipboard_link_opener.exe` のショートカットを置く
-
-## ビルド・テスト
+Requires Windows 10/11 and Python 3.10+.
 
 ```cmd
-build.bat
+pip install -r requirements.txt
 python -m pytest -q
+build.bat
 ```
 
-Windows 10/11、Python 3.10+（ビルド時のみ）。
+`build.bat` produces `build\clipboard_link_opener.exe` (PyInstaller). `pythonw run.py` runs it without building.
+
+## Prior art
+
+Clipboard managers such as [CopyQ](https://github.com/hluk/CopyQ) (automatic commands with a window filter), KDE [Klipper](https://userbase.kde.org/Klipper) (regex actions, browsers excluded by default) and [Clipnik](https://github.com/mpeutz/Clipnik) (per-app copy rules, open/reveal actions) can do similar things as part of a larger tool. This project does only this one job, with safe defaults and no setup.
+
+## License
+
+MIT
+
+---
+
+## 日本語
+
+コピーしたローカルファイルのパスや URL を、貼り付けずにそのまま開く Windows 常駐ツールです。Claude Code などの AI コーディングツールがターミナルに平文で出すパスを、Windows Terminal で選択する（`copyOnSelect` で自動的にコピーされる）だけで開けます。
+
+- 開くのは、コピーした文字全体が 1 つのパスか URL のときだけです。
+- 対象はターミナルとエディタでコピーしたものだけで、ブラウザやチャットアプリでのコピーは無視します。
+- 存在するパスで、許可したフォルダの下にあるものだけを開きます。
+- 実行ファイル・スクリプト・マクロ付き文書は開かず、Explorer で選択して見せるだけです。
+- 設定は `%APPDATA%\clipboard_link_opener\config.json` にあり、URL を開かないようにするなら `open_urls: false` にします。

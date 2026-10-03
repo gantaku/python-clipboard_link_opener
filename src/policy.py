@@ -33,6 +33,8 @@ class Policy:
     allowed_roots: tuple[Path, ...]
     open_urls: bool = True
     reveal_extensions: frozenset[str] = field(default=DEFAULT_REVEAL_EXTENSIONS)
+    # Lower-case exe names a copy must come from; empty means any app.
+    source_apps: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -82,6 +84,12 @@ def decide(
     if target.line is None and suffix in policy.reveal_extensions:
         return Decision("reveal", clean, "executable type")
     return Decision("open", clean)
+
+
+def source_allowed(source: str | None, policy: Policy) -> bool:
+    if not policy.source_apps:
+        return True
+    return source is not None and source.lower() in policy.source_apps
 
 
 def _canonical(path: str) -> str:

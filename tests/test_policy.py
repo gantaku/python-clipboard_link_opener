@@ -137,3 +137,20 @@ def test_link_escaping_root_is_rejected(root, tmp_path):
         assert decide(path_target(link / "a.md"), make_policy(root)).action == "reject"
     finally:
         os.rmdir(link)
+
+
+def test_source_filter():
+    from src.policy import source_allowed
+
+    policy = Policy(allowed_roots=(), source_apps=frozenset({"windowsterminal.exe"}))
+    assert source_allowed("WindowsTerminal.exe", policy)
+    assert not source_allowed("chrome.exe", policy)
+    assert not source_allowed(None, policy)
+
+
+def test_empty_source_list_allows_any_app():
+    from src.policy import source_allowed
+
+    policy = Policy(allowed_roots=(), source_apps=frozenset())
+    assert source_allowed("chrome.exe", policy)
+    assert source_allowed(None, policy)

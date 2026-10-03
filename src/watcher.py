@@ -10,6 +10,7 @@ from typing import Callable
 log = logging.getLogger(__name__)
 
 POLL_SECONDS = 0.2
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 DEDUP_SECONDS = 2.0
 
 
@@ -34,7 +35,7 @@ class Deduper:
 class ClipboardWatcher(threading.Thread):
     """Poll the clipboard sequence number; read text only when it changes."""
 
-    def __init__(self, on_text: Callable[[str], None], poll: float = POLL_SECONDS):
+    def __init__(self, on_text: Callable[[str, str | None], None], poll: float = POLL_SECONDS):
         super().__init__(name="clipboard-watcher", daemon=True)
         self._on_text = on_text
         self._poll = poll
@@ -62,9 +63,39 @@ class ClipboardWatcher(threading.Thread):
             last = current
             try:
                 if text is not None:
-                    self._on_text(text)
+                    self._on_text(text, clipboard_source())
             except Exception:  # a dead watcher thread would silently stop the app
                 log.exception("clipboard handling failed")
+
+
+def clipboard_source() -> str | None:
+    """Lower-case exe name of the app that copied (clipboard owner, else foreground window)."""
+    import ctypes
+    from ctypes import wintypes
+
+    try:
+        user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
+        user32.GetClipboardOwner.restype = wintypes.HWND
+        user32.GetForegroundWindow.restype = wintypes.HWND
+        hwnd = user32.GetClipboardOwner() or user32.GetForegroundWindow()
+        if not hwnd:
+            return None
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)
+        if not handle:
+            return None
+        try:
+            buffer = ctypes.create_unicode_buffer(1024)
+            size = wintypes.DWORD(len(buffer))
+            if not kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)):
+                return None
+        finally:
+            kernel32.CloseHandle(handle)
+        return buffer.value.rsplit("\\", 1)[-1].lower()
+    except Exception:  # never let the watcher thread die
+        log.exception("clipboard source lookup failed")
+        return None
 
 
 class ClipboardBusy(Exception):

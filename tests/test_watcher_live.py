@@ -63,7 +63,7 @@ def test_new_copy_is_delivered_but_existing_content_is_not(saved_clipboard):
     received = []
     got = threading.Event()
 
-    def on_text(text):
+    def on_text(text, source=None):
         received.append(text)
         got.set()
 
@@ -85,7 +85,7 @@ def test_handler_exception_does_not_stop_watching(saved_clipboard):
     received = []
     second = threading.Event()
 
-    def on_text(text):
+    def on_text(text, source=None):
         received.append(text)
         if len(received) == 1:
             raise RuntimeError("boom")
@@ -103,3 +103,11 @@ def test_handler_exception_does_not_stop_watching(saved_clipboard):
         watcher.stop()
         watcher.join(2.0)
     assert received == ["one", "two"]
+
+
+def test_clipboard_source_is_an_exe_name(saved_clipboard):
+    from src.watcher import clipboard_source
+
+    set_clipboard("source-check")
+    source = clipboard_source()
+    assert source is None or (source.endswith(".exe") and source == source.lower())

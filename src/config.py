@@ -12,7 +12,14 @@ from src.policy import DEFAULT_REVEAL_EXTENSIONS, Policy
 log = logging.getLogger(__name__)
 
 APP_DIR_NAME = "clipboard_link_opener"
-DEFAULT_ROOTS = ("knowledge", "workspaces", ".claude", "Downloads")
+DEFAULT_ROOTS = ("~",)
+# Terminals and editors where tools print paths. Browsers and chat apps are left
+# out so copying a link there to paste elsewhere does not open it.
+DEFAULT_SOURCE_APPS = (
+    "windowsterminal.exe", "openconsole.exe", "conhost.exe", "wezterm-gui.exe",
+    "alacritty.exe", "mintty.exe", "tabby.exe", "code.exe", "cursor.exe",
+    "windsurf.exe", "claude.exe",
+)  # fmt: skip
 
 
 def app_dir() -> Path:
@@ -26,7 +33,8 @@ def obsidian_config_path() -> Path:
 def default_settings() -> dict:
     return {
         "open_urls": True,
-        "allowed_roots": [f"~/{r}" for r in DEFAULT_ROOTS],
+        "allowed_roots": list(DEFAULT_ROOTS),
+        "source_apps": list(DEFAULT_SOURCE_APPS),
         "reveal_extensions": sorted(DEFAULT_REVEAL_EXTENSIONS),
     }
 
@@ -52,6 +60,11 @@ def load_config(path: Path, home: Path) -> Policy:
         )
         exts = defaults["reveal_extensions"]
 
+    apps = data.get("source_apps", defaults["source_apps"])
+    if not _is_str_list(apps):
+        log.warning("config: source_apps must be a list of strings; using default")
+        apps = defaults["source_apps"]
+
     expanded = tuple(_expand(r, home) for r in roots if r.strip())
     absolute = tuple(r for r in expanded if r.is_absolute())
     if len(absolute) != len(roots):
@@ -60,6 +73,7 @@ def load_config(path: Path, home: Path) -> Policy:
         allowed_roots=absolute,
         open_urls=open_urls,
         reveal_extensions=frozenset(e.lower() for e in exts),
+        source_apps=frozenset(a.lower() for a in apps),
     )
 
 

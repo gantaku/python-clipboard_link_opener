@@ -49,7 +49,7 @@ def test_missing_config_is_created_with_defaults(tmp_path):
     policy = load_config(path, HOME)
     assert path.exists()
     assert policy.open_urls is True
-    assert policy.allowed_roots == tuple(HOME / r for r in DEFAULT_ROOTS)
+    assert policy.allowed_roots == (HOME,)
     data = json.loads(path.read_text(encoding="utf-8"))
     assert data["open_urls"] is True
 
@@ -87,7 +87,7 @@ def test_wrong_types_fall_back_per_field(tmp_path):
     )
     policy = load_config(path, HOME)
     assert policy.open_urls is True
-    assert policy.allowed_roots == tuple(HOME / r for r in DEFAULT_ROOTS)
+    assert policy.allowed_roots == (HOME,)
 
 
 def test_obsidian_vaults_are_read(tmp_path):
@@ -117,3 +117,18 @@ def test_relative_and_empty_roots_are_skipped(tmp_path):
     path = tmp_path / "config.json"
     path.write_text(json.dumps({"allowed_roots": ["foo", "", "~/x"]}), encoding="utf-8")
     assert load_config(path, HOME).allowed_roots == (HOME / "x",)
+
+
+def test_source_apps_default_and_override(tmp_path):
+    from src.config import DEFAULT_SOURCE_APPS
+
+    path = tmp_path / "config.json"
+    assert load_config(path, HOME).source_apps == frozenset(DEFAULT_SOURCE_APPS)
+    path.write_text(json.dumps({"source_apps": ["Foo.EXE"]}), encoding="utf-8")
+    assert load_config(path, HOME).source_apps == frozenset({"foo.exe"})
+    path.write_text(json.dumps({"source_apps": []}), encoding="utf-8")
+    assert load_config(path, HOME).source_apps == frozenset()
+
+
+def test_default_roots_are_generic():
+    assert DEFAULT_ROOTS == ("~",)

@@ -13,7 +13,7 @@ from src import __version__
 from src.config import app_dir, load_config, load_obsidian_vaults, obsidian_config_path
 from src.normalize import normalize
 from src.opener import launch, plan_launch
-from src.policy import decide
+from src.policy import decide, source_allowed
 from src.watcher import ClipboardWatcher, Deduper
 
 log = logging.getLogger("clipboard_link_opener")
@@ -35,13 +35,16 @@ class Handler:
         self.paused = threading.Event()
         self._reload_if_changed()
 
-    def __call__(self, text: str) -> None:
+    def __call__(self, text: str, source: str | None = None) -> None:
         if self.paused.is_set() or not self._dedup.should_fire(text):
             return
         target = normalize(text, self._home)
         if target is None:
             return
         self._reload_if_changed()
+        if not source_allowed(source, self._policy):
+            log.info("ignored (copied from %s): %s", source, target.url or target.path)
+            return
         decision = decide(target, self._policy)
         shown = target.url or str(target.path)
         if decision.action == "reject":
@@ -52,7 +55,7 @@ class Handler:
             return
         try:
             launch(plan)
-            log.info("%s: %s", decision.action, shown)
+            log.info("%s (from %s): %s", decision.action, source, shown)
         except (OSError, ValueError) as error:
             log.warning("launch failed for %s: %s", shown, error)
 

@@ -14,7 +14,9 @@ def env(tmp_path, monkeypatch):
     (home / "knowledge" / "a.txt").write_text("x", encoding="utf-8")
     (home / "knowledge" / "run.bat").write_text("x", encoding="utf-8")
     config = tmp_path / "config.json"
-    config.write_text(json.dumps({"allowed_roots": ["~/knowledge"]}), encoding="utf-8")
+    config.write_text(
+        json.dumps({"allowed_roots": ["~/knowledge"], "source_apps": []}), encoding="utf-8"
+    )
     monkeypatch.setattr(app, "obsidian_config_path", lambda: tmp_path / "none.json")
     launched = []
     monkeypatch.setattr(app, "launch", launched.append)
@@ -84,3 +86,26 @@ def test_launch_error_is_swallowed(env, monkeypatch):
 
     monkeypatch.setattr(app, "launch", boom)
     app.Handler(config, home)("~/knowledge/a.txt")
+
+
+def use_terminal_only(config):
+    config.write_text(
+        json.dumps({"allowed_roots": ["~/knowledge"], "source_apps": ["windowsterminal.exe"]}),
+        encoding="utf-8",
+    )
+
+
+def test_copy_from_other_app_is_ignored(env):
+    home, config, launched = env
+    use_terminal_only(config)
+    handler = app.Handler(config, home)
+    handler("~/knowledge/a.txt", "chrome.exe")
+    handler("https://example.com", "slack.exe")
+    assert launched == []
+
+
+def test_copy_from_terminal_opens(env):
+    home, config, launched = env
+    use_terminal_only(config)
+    app.Handler(config, home)("~/knowledge/a.txt", "WindowsTerminal.exe")
+    assert len(launched) == 1
