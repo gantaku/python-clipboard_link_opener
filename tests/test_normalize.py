@@ -57,6 +57,11 @@ def test_path_notations(text, expected):
         "~/knowledge/a.md、",
         "~/knowledge/a.md.",
         "`~/knowledge/a.md`。",
+        # Selections that run one character into the following Japanese text.
+        "~/knowledge/a.md（",
+        "~/knowledge/a.md／",
+        "~/knowledge/a.md「",
+        "~/knowledge/a.md：",
     ],
 )
 def test_wrappers_and_trailing_punctuation_are_stripped(text):
@@ -131,12 +136,21 @@ def test_urls(text):
         "ftp://example.com/a",
         "javascript:alert(1)",
         "https://example.com/a b",
+        # A URL followed by a Japanese sentence is a sentence, not a URL.
+        "http://127.0.0.1:8767/legacy-regel.htmlは作成中にして。",
+        "https://example.com/a（説明）",
         "C:",
         "x" * 5000,
     ],
 )
 def test_rejects_non_targets(text):
     assert normalize(text, HOME) is None
+
+
+def test_balanced_fullwidth_brackets_in_name_are_kept():
+    assert path_of("~/knowledge/資料（最終）").path == Path(
+        r"C:\Users\me\knowledge\資料（最終）"
+    )
 
 
 def test_none_input():

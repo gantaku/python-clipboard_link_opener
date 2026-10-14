@@ -24,9 +24,16 @@ _WRAPPERS = (
     ("(", ")"),
     ("（", "）"),
 )
-_TRAILING_PUNCT = "。、，．,;:."
+# Fullwidth opening brackets and slashes are included because a selection often
+# runs one character into the Japanese text that follows a path. Closing brackets
+# are not: "資料（最終）" is a valid name.
+_TRAILING_PUNCT = "。、，．,;:.：；（「『【／"
 
-_URL_RE = re.compile(r"^https?://[^\s<>\"`]+$", re.IGNORECASE)
+# ASCII only: Japanese has no spaces, so "https://a/x.htmlは…" would otherwise
+# match as one URL. Terminals print non-ASCII URLs percent-encoded.
+_URL_RE = re.compile(
+    r"^https?://[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+$", re.IGNORECASE
+)
 _DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 _POSIX_DRIVE_RE = re.compile(r"^/(?:mnt/)?([A-Za-z])(?:/(.*))?$")
 _LINE_RE = re.compile(r"^(?P<path>.+?)(?::(?P<line>\d+)(?::\d+|-\d+)?|#L(?P<gh>\d+))$")
