@@ -92,7 +92,7 @@ What differs from Windows:
 
 | | Linux |
 |---|---|
-| Notations | `~/…`, `/home/…`, `file:///…` (`/c/…` and `/mnt/c/…` are ordinary paths, `C:\…` is not a path) |
+| Notations | `~/…`, `/home/…`, `file:///…` (`/c/…` and `/mnt/c/…` are ordinary paths, `C:\…` is not a path). File names containing `:` are not opened (the Windows stream guard is kept) |
 | What is watched | CLIPBOARD (Ctrl+Shift+C) and PRIMARY (just selecting). PRIMARY is read only after the mouse buttons are up and the text has stayed the same for 0.5 s, so a half-finished drag never opens. `watch_primary: false` turns it off |
 | Source app | The selection owner's process, found through the X-Resource extension (falling back to `_NET_WM_PID`), by the name of `/proc/<pid>/exe`: `gnome-terminal-server`, `wezterm-gui`, `kitty`, `code`, … Unknown owners are ignored. Terminals written in Python (Terminator, Guake) cannot be told apart from other Python programs and are not in the default list |
 | Opens with | `xdg-open` (default app, browser, `vscode://`, `obsidian://`) |
