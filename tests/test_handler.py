@@ -6,6 +6,8 @@ import pytest
 
 import src.app as app
 
+from tests.conftest import windows_only
+
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
@@ -29,6 +31,7 @@ def test_allowed_file_is_launched(env):
     assert [p.arg for p in launched] == [str(home / "knowledge" / "a.txt")]
 
 
+@windows_only
 def test_executable_is_revealed(env):
     home, config, launched = env
     app.Handler(config, home)("~/knowledge/run.bat")

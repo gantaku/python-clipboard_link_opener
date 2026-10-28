@@ -19,6 +19,7 @@ from src.config import (
 )
 from src.normalize import normalize
 from src.opener import launch, plan_launch
+from src.osinfo import IS_WINDOWS
 from src.policy import decide, source_allowed
 from src.watcher import ClipboardWatcher, Deduper
 
@@ -26,6 +27,7 @@ log = logging.getLogger("clipboard_link_opener")
 
 MUTEX_NAME = "Local\\clipboard_link_opener"
 ERROR_ALREADY_EXISTS = 183
+LOCK_NAME = "clipboard_link_opener.lock"
 
 
 class Handler:
@@ -45,6 +47,11 @@ class Handler:
         self._vaults: tuple[Path, ...] = ()
         self.paused = threading.Event()
         self._reload_if_changed()
+
+    def watch_primary(self) -> bool:
+        """Linux: whether X11 PRIMARY (selection without an explicit copy) is watched."""
+        self._reload_if_changed()
+        return self._policy is not None and self._policy.watch_primary
 
     def __call__(self, text: str, source: str | None = None) -> None:
         if self.paused.is_set():
@@ -126,6 +133,8 @@ def setup_logging(directory: Path) -> Path:
 
 
 def acquire_single_instance():
+    if not IS_WINDOWS:
+        return acquire_lock_file(lock_path())
     import win32api
     import win32event
 
@@ -133,6 +142,58 @@ def acquire_single_instance():
     if win32api.GetLastError() == ERROR_ALREADY_EXISTS:
         return None
     return mutex
+
+
+def lock_path() -> Path:
+    runtime = os.environ.get("XDG_RUNTIME_DIR", "")
+    return (Path(runtime) if os.path.isabs(runtime) else app_dir()) / LOCK_NAME
+
+
+def acquire_lock_file(path: Path):
+    """Open file holding an exclusive flock, or None if another instance holds it.
+
+    The kernel drops the lock when the process exits, so a crash leaves nothing stale.
+    """
+    import fcntl
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(path, "a+")  # noqa: SIM115 - kept open for the life of the process
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return None
+    return handle
+
+
+def open_with_default_app(path: Path) -> None:
+    if IS_WINDOWS:
+        os.startfile(str(path))  # noqa: S606
+    else:
+        from src.opener import LaunchPlan
+
+        launch(LaunchPlan("shell", str(path)))
+
+
+def import_pystray():
+    """pystray, or None when no tray backend works (the app then runs without a tray)."""
+    try:
+        import pystray
+
+        return pystray
+    except Exception as error:  # noqa: BLE001 - a missing GI namespace raises ValueError
+        if IS_WINDOWS or os.environ.get("PYSTRAY_BACKEND"):
+            log.warning("tray unavailable: %s", error)
+            return None
+    # Without the AppIndicator GI bindings, fall back to a plain X11 tray icon.
+    os.environ["PYSTRAY_BACKEND"] = "xorg"
+    try:
+        import pystray
+
+        return pystray
+    except Exception as error:  # noqa: BLE001
+        log.warning("tray unavailable: %s", error)
+        return None
 
 
 def make_icon_image(paused: bool):
@@ -149,11 +210,19 @@ def make_icon_image(paused: bool):
 
 
 def run_tray(
-    handler: Handler, watcher: ClipboardWatcher, config_path: Path, log_path: Path
+    handler: Handler,
+    watcher: ClipboardWatcher | None,
+    config_path: Path,
+    log_path: Path,
+    pystray=None,
+    notice: str | None = None,
 ) -> None:
-    import pystray
+    if pystray is None:
+        import pystray
 
     title = f"Clipboard Link Opener {__version__}"
+    if notice:
+        title += f"（{notice}）"
 
     def toggle_pause(icon, _item):
         if handler.paused.is_set():
@@ -166,10 +235,11 @@ def run_tray(
         log.info("paused" if paused else "resumed")
 
     def open_file(path: Path):
-        return lambda _icon, _item: os.startfile(str(path))
+        return lambda _icon, _item: open_with_default_app(path)
 
     def quit_app(icon, _item):
-        watcher.stop()
+        if watcher is not None:
+            watcher.stop()
         icon.stop()
 
     menu = pystray.Menu(
@@ -185,6 +255,8 @@ def run_tray(
 
 
 def main() -> int:
+    if not IS_WINDOWS:
+        return main_linux()
     directory = app_dir()
     log_path = setup_logging(directory)
     mutex = acquire_single_instance()
@@ -202,6 +274,65 @@ def main() -> int:
         watcher.stop()
         log.info("stop")
     return 0
+
+
+def main_linux() -> int:
+    import signal
+
+    from src.watcher_x11 import X11Clipboard, session_problem
+
+    directory = app_dir()
+    log_path = setup_logging(directory)
+    lock = acquire_single_instance()
+    if lock is None:
+        log.info("already running; exit")
+        return 0
+    log.info("start %s", __version__)
+    config_path = directory / "config.json"
+    handler = Handler(config_path, Path.home())
+
+    problem = session_problem()
+    watcher = None
+    if problem:
+        # The copying app cannot be identified, so nothing is opened at all.
+        log.error("not watching: %s", problem)
+    else:
+        clipboard = X11Clipboard(watch_primary=handler.watch_primary)
+        try:
+            # Fail at start rather than logging the same error every poll.
+            clipboard.open()
+        except Exception as error:  # noqa: BLE001
+            problem = f"X11 に接続できません: {error}"
+            log.error("not watching: %s", problem)
+        else:
+            watcher = ClipboardWatcher(
+                handler, sequence=clipboard.sequence, reader=clipboard.read
+            )
+            watcher.start()
+
+    pystray = import_pystray()
+    try:
+        if pystray is not None:
+            try:
+                run_tray(handler, watcher, config_path, log_path, pystray, problem)
+                return 0
+            except Exception:  # noqa: BLE001 - no tray host: keep working without one
+                log.exception("tray failed; running without a tray")
+        if watcher is None:
+            return 1
+        stopped = threading.Event()
+        for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            signal.signal(signum, lambda *_args: stopped.set())
+        log.info("running without a tray")
+        while not stopped.wait(1.0):
+            if not watcher.is_alive():
+                log.error("clipboard watcher stopped")
+                return 1
+        return 0
+    finally:
+        if watcher is not None:
+            watcher.stop()
+        log.info("stop")
 
 
 if __name__ == "__main__":

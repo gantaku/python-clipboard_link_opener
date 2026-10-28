@@ -6,6 +6,8 @@ import pytest
 
 from src.normalize import Target, normalize
 
+from tests.conftest import windows_only
+
 HOME = Path(r"C:\Users\me")
 
 
@@ -16,6 +18,7 @@ def path_of(text: str) -> Target:
     return target
 
 
+@windows_only
 @pytest.mark.parametrize(
     "text, expected",
     [
@@ -43,6 +46,7 @@ def test_path_notations(text, expected):
     assert target.line is None
 
 
+@windows_only
 @pytest.mark.parametrize(
     "text",
     [
@@ -68,6 +72,7 @@ def test_wrappers_and_trailing_punctuation_are_stripped(text):
     assert path_of(text).path == Path(r"C:\Users\me\knowledge\a.md")
 
 
+@windows_only
 @pytest.mark.parametrize(
     "text, line",
     [
@@ -85,6 +90,7 @@ def test_line_suffix(text, line):
     assert target.line == line
 
 
+@windows_only
 def test_terminal_wrapped_path_is_joined():
     text = "C:\\Users\\me\\knowledge\\_inbox\\2026-10-03-x\\2026-10-03-0815-[re\n  port]-slug.md"
     assert path_of(text).path == Path(
@@ -147,6 +153,7 @@ def test_rejects_non_targets(text):
     assert normalize(text, HOME) is None
 
 
+@windows_only
 def test_balanced_fullwidth_brackets_in_name_are_kept():
     assert path_of("~/knowledge/資料（最終）").path == Path(
         r"C:\Users\me\knowledge\資料（最終）"
@@ -177,6 +184,7 @@ def test_wrapped_url_is_joined():
     assert target.url == "https://example.com/very/long/path?q=1"
 
 
+@windows_only
 def test_file_uri_line_fragment():
     target = path_of("file:///C:/Users/me/a.md#L10")
     assert target.path == Path(r"C:\Users\me\a.md")

@@ -13,6 +13,8 @@ from src.normalize import normalize
 from src.policy import DRIVE_FIXED, DRIVE_REMOTE, network_hop
 from src.watcher import ClipboardBusy, ClipboardWatcher, Deduper
 
+from tests.conftest import windows_only
+
 HOME = Path(r"C:\Users\me")
 REPARSE = 0x400
 
@@ -37,34 +39,41 @@ def fake_fs(links: dict[str, str], remote_drives=()):
     return {"lstat": lstat, "readlink": readlink, "drive_type": drive_type}
 
 
+@windows_only
 def test_plain_local_path_has_no_network_hop():
     assert network_hop(r"C:\Users\me\a.md", **fake_fs({})) is None
 
 
+@windows_only
 def test_symlink_to_unc_is_detected_without_following():
     fs = fake_fs({r"C:\Users\me\share": r"\\?\UNC\server\share"})
     assert network_hop(r"C:\Users\me\share\a.md", **fs) is not None
 
 
+@windows_only
 def test_junction_to_mapped_network_drive_is_detected():
     fs = fake_fs({r"C:\Users\me\z": r"\??\Z:\data"}, remote_drives="Z")
     assert network_hop(r"C:\Users\me\z\a.md", **fs) is not None
 
 
+@windows_only
 def test_mapped_network_drive_is_detected():
     assert network_hop(r"Z:\a.md", **fake_fs({}, remote_drives="Z")) is not None
 
 
+@windows_only
 def test_chained_local_links_are_followed():
     fs = fake_fs({r"C:\Users\me\a": r"C:\other", r"C:\other": r"\\server\x"})
     assert network_hop(r"C:\Users\me\a\f.md", **fs) is not None
 
 
+@windows_only
 def test_relative_local_link_is_fine():
     fs = fake_fs({r"C:\Users\me\a": r"..\b"})
     assert network_hop(r"C:\Users\me\a\f.md", **fs) is None
 
 
+@windows_only
 def test_reparse_point_that_is_not_a_link_is_ignored():
     # OneDrive placeholders are reparse points that readlink() refuses.
     def lstat(path):
@@ -82,6 +91,7 @@ def test_reparse_point_that_is_not_a_link_is_ignored():
     assert hop is None
 
 
+@windows_only
 def test_link_loop_is_rejected():
     fs = fake_fs({r"C:\a": r"C:\b", r"C:\b": r"C:\a"})
     assert network_hop(r"C:\a\x.md", **fs) is not None
@@ -116,6 +126,7 @@ def write(path: Path, data, bump: int = 0) -> None:
 # --- #2 extension list can only grow -----------------------------------------
 
 
+@windows_only
 def test_custom_reveal_list_keeps_builtin_protection(env):
     home, config, _, launched = env
     write(
@@ -215,17 +226,20 @@ def test_rejected_copy_does_not_suppress_the_next_one(env):
 # --- #7 / #8 / #9 normalization ------------------------------------------------
 
 
+@windows_only
 def test_encoded_hash_in_file_uri_is_part_of_the_name():
     target = normalize("file:///C:/Users/me/a%23L10", HOME)
     assert target.path == Path(r"C:\Users\me\a#L10")
     assert target.line is None
 
 
+@windows_only
 def test_file_uri_fragment_still_gives_line():
     target = normalize("file:///C:/Users/me/a.md#L7", HOME)
     assert (target.path, target.line) == (Path(r"C:\Users\me\a.md"), 7)
 
 
+@windows_only
 @pytest.mark.parametrize(
     "text",
     [
@@ -238,6 +252,7 @@ def test_posix_paths_with_spaces(text):
     assert normalize(text, HOME).path == Path(r"C:\Users\me\my project\a.md")
 
 
+@windows_only
 @pytest.mark.parametrize(
     "text",
     ['"C:\\Users\\me\\a.md":42', "`C:\\Users\\me\\a.md`:42", "'~/a.md':42"],

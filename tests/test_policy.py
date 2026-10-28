@@ -7,6 +7,8 @@ import pytest
 from src.normalize import Target
 from src.policy import Policy, decide
 
+from tests.conftest import windows_only
+
 
 @pytest.fixture
 def root(tmp_path):
@@ -42,6 +44,7 @@ def test_root_itself_is_allowed(root):
     assert decide(path_target(root), make_policy(root)).action == "folder"
 
 
+@windows_only
 def test_root_match_is_case_insensitive(root):
     upper = Path(str(root).upper()) / "NOTE.MD"
     assert decide(path_target(upper), make_policy(root)).action == "open"
@@ -124,6 +127,7 @@ def test_more_dangerous_types_are_revealed(root, name):
     assert decide(path_target(root / name), make_policy(root)).action == "reveal"
 
 
+@windows_only
 def test_link_escaping_root_is_rejected(root, tmp_path):
     import os
     import subprocess

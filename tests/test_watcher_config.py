@@ -8,6 +8,8 @@ import pytest
 from src.config import DEFAULT_ROOTS, ConfigError, load_config, load_obsidian_vaults
 from src.watcher import Deduper
 
+from tests.conftest import windows_only
+
 HOME = Path(r"C:\Users\me")
 
 
@@ -46,6 +48,7 @@ def test_different_text_fires_immediately():
     assert dedup.should_fire("b")
 
 
+@windows_only
 def test_missing_config_is_created_with_defaults(tmp_path):
     path = tmp_path / "cfg" / "config.json"
     policy = load_config(path, HOME)
@@ -56,6 +59,7 @@ def test_missing_config_is_created_with_defaults(tmp_path):
     assert data["open_urls"] is True
 
 
+@windows_only
 def test_config_values_are_read(tmp_path):
     path = tmp_path / "config.json"
     path.write_text(
@@ -128,6 +132,7 @@ def test_obsidian_missing_or_broken_returns_empty(tmp_path):
 
 
 
+@windows_only
 def test_source_apps_default_and_override(tmp_path):
     from src.config import DEFAULT_SOURCE_APPS
 

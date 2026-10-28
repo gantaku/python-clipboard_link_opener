@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import unquote, urlsplit
 
+from src.osinfo import IS_WINDOWS
+
 MAX_LENGTH = 2048
 
 _WRAPPERS = (
@@ -66,7 +68,7 @@ def normalize(text: str | None, home: Path) -> Target | None:
         path_text, line = _split_line_suffix(candidate)
         # `"C:\a.md":42` -> quotes remain around the path once the line is split off.
         path_text = _clean(path_text) if line is not None else path_text
-    path = _to_windows_path(path_text, home)
+    path = _to_windows_path(path_text, home) if IS_WINDOWS else _to_posix_path(path_text, home)
     if path is None:
         return None
     return Target(kind="path", path=path, line=line)
@@ -75,13 +77,20 @@ def normalize(text: str | None, home: Path) -> Target | None:
 _TOKEN_START_RE = re.compile(
     r"^(?:https?://|file:|[A-Za-z]:[\\/]|~|/(?:mnt/)?[A-Za-z]/|\\)", re.IGNORECASE
 )
+# On Linux any "/" may start a new path, so a continuation starting with one is refused.
+_POSIX_TOKEN_START_RE = re.compile(r"^(?:https?://|file:|~|/|\\)", re.IGNORECASE)
+_URL_START_RE = re.compile(r"^https?://", re.IGNORECASE)
 
 
 def _join_wrapped_lines(text: str) -> str:
     # Terminals hard-wrap long paths and indent the continuation. A continuation
     # that starts like a new path/URL means several items were copied: refuse.
     parts = [part.strip() for part in text.splitlines() if part.strip()]
-    if any(_TOKEN_START_RE.match(part) for part in parts[1:]):
+    token_start = _TOKEN_START_RE
+    if not IS_WINDOWS and not (parts and _URL_START_RE.match(parts[0])):
+        # A wrapped URL may continue with "/": joined, it is still only a URL.
+        token_start = _POSIX_TOKEN_START_RE
+    if any(token_start.match(part) for part in parts[1:]):
         return ""
     return "".join(parts)
 
@@ -145,4 +154,18 @@ def _to_windows_path(text: str, home: Path) -> Path | None:
     if posix:
         drive, rest = posix.group(1).upper(), posix.group(2) or ""
         return Path(f"{drive}:\\" + rest.replace("/", "\\"))
+    return None
+
+
+def _to_posix_path(text: str, home: Path) -> Path | None:
+    # "/c/..." and "/mnt/c/..." are ordinary paths here, not Windows drives.
+    if text == "~":
+        return home
+    if text.startswith("~/"):
+        return home / text[2:]
+    if text.startswith(("\\\\", "//")):
+        # Kept as is so policy rejects it as a network path before any disk access.
+        return Path(text)
+    if text.startswith("/"):
+        return Path(text)
     return None
