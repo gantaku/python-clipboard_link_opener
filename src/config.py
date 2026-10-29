@@ -27,7 +27,7 @@ LINUX_SOURCE_APPS = (
     "gnome-terminal-server", "kgx", "ptyxis", "konsole", "xfce4-terminal",
     "mate-terminal", "lxterminal", "qterminal", "tilix", "kitty", "alacritty",
     "wezterm-gui", "xterm", "urxvt", "st", "sakura", "terminology", "tabby",
-    "code", "code-insiders", "codium", "cursor", "windsurf", "claude",
+    "code", "code-insiders", "codium", "cursor", "windsurf", "claude", "claude-desktop",
 )  # fmt: skip
 DEFAULT_SOURCE_APPS = WINDOWS_SOURCE_APPS if IS_WINDOWS else LINUX_SOURCE_APPS
 
