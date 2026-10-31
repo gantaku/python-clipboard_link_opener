@@ -7,7 +7,8 @@ import logging
 import os
 from pathlib import Path
 
-from src.policy import DEFAULT_REVEAL_EXTENSIONS, Policy
+from src.osinfo import IS_WINDOWS
+from src.policy import BUILTIN_REVEAL_EXTENSIONS, Policy
 
 log = logging.getLogger(__name__)
 
@@ -15,19 +16,42 @@ APP_DIR_NAME = "clipboard_link_opener"
 DEFAULT_ROOTS = ("~",)
 # Terminals and editors where tools print paths. Browsers and chat apps are left
 # out so copying a link there to paste elsewhere does not open it.
-DEFAULT_SOURCE_APPS = (
+WINDOWS_SOURCE_APPS = (
     "windowsterminal.exe", "openconsole.exe", "conhost.exe", "wezterm-gui.exe",
     "alacritty.exe", "mintty.exe", "tabby.exe", "code.exe", "cursor.exe",
     "windsurf.exe", "claude.exe",
 )  # fmt: skip
+# Executable names as /proc/<pid>/exe shows them. Terminals written in Python
+# (Terminator, Guake) are left out: their executable is the shared interpreter.
+LINUX_SOURCE_APPS = (
+    "gnome-terminal-server", "kgx", "ptyxis", "konsole", "xfce4-terminal",
+    "mate-terminal", "lxterminal", "qterminal", "tilix", "kitty", "alacritty",
+    "wezterm-gui", "xterm", "urxvt", "st", "sakura", "terminology", "tabby",
+    "code", "code-insiders", "codium", "cursor", "windsurf", "claude", "claude-desktop",
+)  # fmt: skip
+DEFAULT_SOURCE_APPS = WINDOWS_SOURCE_APPS if IS_WINDOWS else LINUX_SOURCE_APPS
 
 
 def app_dir() -> Path:
+    if not IS_WINDOWS:
+        return _xdg_config_home() / APP_DIR_NAME
     return Path(os.environ.get("APPDATA", Path.home())) / APP_DIR_NAME
 
 
 def obsidian_config_path() -> Path:
+    if not IS_WINDOWS:
+        native = _xdg_config_home() / "obsidian" / "obsidian.json"
+        flatpak = (
+            Path.home() / ".var" / "app" / "md.obsidian.Obsidian" / "config" / "obsidian" / "obsidian.json"
+        )
+        return flatpak if not native.exists() and flatpak.exists() else native
     return Path(os.environ.get("APPDATA", Path.home())) / "obsidian" / "obsidian.json"
+
+
+def _xdg_config_home() -> Path:
+    # The spec says a relative value must be ignored.
+    value = os.environ.get("XDG_CONFIG_HOME", "")
+    return Path(value) if os.path.isabs(value) else Path.home() / ".config"
 
 
 class ConfigError(ValueError):
@@ -35,13 +59,17 @@ class ConfigError(ValueError):
 
 
 def default_settings() -> dict:
-    return {
+    settings = {
         "open_urls": True,
         "allowed_roots": list(DEFAULT_ROOTS),
         "source_apps": list(DEFAULT_SOURCE_APPS),
         # Added to the built-in list, which always applies.
         "reveal_extensions": [],
     }
+    if not IS_WINDOWS:
+        # Selecting text in a terminal (X11 PRIMARY), not only Ctrl+Shift+C.
+        settings["watch_primary"] = True
+    return settings
 
 
 def load_config(path: Path, home: Path) -> Policy:
@@ -50,8 +78,9 @@ def load_config(path: Path, home: Path) -> Policy:
     defaults = default_settings()
     settings = {key: data.get(key, value) for key, value in defaults.items()}
 
-    if not isinstance(settings["open_urls"], bool):
-        raise ConfigError("open_urls must be true or false")
+    for key in ("open_urls", "watch_primary"):
+        if key in settings and not isinstance(settings[key], bool):
+            raise ConfigError(f"{key} must be true or false")
     for key in ("allowed_roots", "source_apps", "reveal_extensions"):
         if not _is_str_list(settings[key]):
             raise ConfigError(f"{key} must be a list of strings")
@@ -63,8 +92,9 @@ def load_config(path: Path, home: Path) -> Policy:
     return Policy(
         allowed_roots=roots,
         open_urls=settings["open_urls"],
-        reveal_extensions=DEFAULT_REVEAL_EXTENSIONS | {e.lower() for e in settings["reveal_extensions"]},
+        reveal_extensions=BUILTIN_REVEAL_EXTENSIONS | {e.lower() for e in settings["reveal_extensions"]},
         source_apps=frozenset(a.lower() for a in settings["source_apps"]),
+        watch_primary=settings.get("watch_primary", False),
     )
 
 

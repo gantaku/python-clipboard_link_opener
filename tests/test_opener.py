@@ -6,6 +6,8 @@ from src.normalize import Target
 from src.opener import LaunchPlan, plan_launch
 from src.policy import Decision
 
+from tests.conftest import windows_only
+
 VAULTS = (Path(r"C:\Users\me\knowledge"),)
 
 
@@ -21,6 +23,7 @@ def test_url_opens_in_default_browser():
     assert plan == LaunchPlan(kind="shell", arg="https://example.com")
 
 
+@windows_only
 def test_folder_opens_in_explorer():
     plan = plan_launch(decision("folder", Path(r"C:\Users\me\knowledge")), VAULTS)
     assert plan.kind == "exec"
@@ -28,6 +31,7 @@ def test_folder_opens_in_explorer():
     assert plan.arg[1:] == (r"C:\Users\me\knowledge",)
 
 
+@windows_only
 def test_executable_is_revealed_in_explorer():
     plan = plan_launch(decision("reveal", Path(r"C:\Users\me\work\run.bat")), VAULTS)
     assert plan.kind == "exec"
@@ -35,6 +39,7 @@ def test_executable_is_revealed_in_explorer():
     assert plan.arg[1:] == ("/select,", r"C:\Users\me\work\run.bat")
 
 
+@windows_only
 def test_line_number_opens_vscode_uri():
     plan = plan_launch(
         decision("open", Path(r"C:\Users\me\work\my app.py"), line=42), VAULTS
@@ -44,6 +49,7 @@ def test_line_number_opens_vscode_uri():
     )
 
 
+@windows_only
 def test_markdown_in_vault_opens_obsidian():
     path = Path(r"C:\Users\me\knowledge\_inbox\x\2026-[report]-a b.md")
     plan = plan_launch(decision("open", path), VAULTS)
@@ -53,6 +59,7 @@ def test_markdown_in_vault_opens_obsidian():
     assert " " not in plan.arg
 
 
+@windows_only
 def test_markdown_vault_match_is_case_insensitive():
     path = Path(r"c:\users\ME\Knowledge\a.MD")
     assert plan_launch(decision("open", path), VAULTS).arg.startswith("obsidian://")
@@ -83,6 +90,7 @@ def test_reject_has_no_plan():
     assert plan_launch(decision("reject", Path(r"C:\x")), VAULTS) is None
 
 
+@windows_only
 def test_explorer_is_absolute_path(monkeypatch):
     monkeypatch.setenv("SystemRoot", r"C:\Windows")
     plan = plan_launch(decision("folder", Path(r"C:\x")), VAULTS)
