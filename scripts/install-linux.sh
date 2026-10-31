@@ -37,5 +37,6 @@ X-GNOME-Autostart-enabled=true
 EOF
 echo "wrote $entry"
 
-nohup "$repo/.venv/bin/python" "$repo/run.py" >/dev/null 2>&1 &
+# setsid: a new session, so closing the terminal that ran this does not stop it.
+setsid -f "$repo/.venv/bin/python" "$repo/run.py" </dev/null >/dev/null 2>&1
 echo "started (log: ${XDG_CONFIG_HOME:-$HOME/.config}/clipboard_link_opener/app.log)"

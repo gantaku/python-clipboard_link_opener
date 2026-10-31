@@ -455,3 +455,71 @@ def test_exe_name_from_proc():
 )
 def test_session_problem(environ, ok):
     assert (session_problem(environ) is None) is ok
+
+
+# --- tray re-docking ------------------------------------------------------------------
+
+
+def test_tray_watch_fires_when_a_new_host_appears(monkeypatch):
+    from src.watcher_x11 import TrayHostWatch
+
+    monkeypatch.setattr(TrayHostWatch, "POLL_SECONDS", 0.01)
+    owners = iter([10, 10, 0, 0, 20, 20])
+    fired = []
+    watch = TrayHostWatch(on_change=lambda: fired.append(1), owner=lambda: next(owners, 20))
+    watch.start()
+    watch.join(2.0)
+    assert fired == [1]
+    assert not watch.is_alive()
+
+
+def test_tray_watch_ignores_the_same_host_and_a_gap(monkeypatch):
+    from src.watcher_x11 import TrayHostWatch
+
+    monkeypatch.setattr(TrayHostWatch, "POLL_SECONDS", 0.01)
+    fired = []
+    watch = TrayHostWatch(on_change=lambda: fired.append(1), owner=iter([10, 0, 10, 10] + [10] * 100).__next__)
+    watch.start()
+    threading_wait(0.2)
+    watch.stop()
+    watch.join(1.0)
+    assert fired == []
+
+
+def threading_wait(seconds):
+    import threading
+
+    threading.Event().wait(seconds)
+
+
+def test_redocking_recreates_the_icon_until_quit():
+    import threading
+
+    quitting = threading.Event()
+    runs = []
+
+    class FakeIcon:
+        def __init__(self, n):
+            self.n = n
+
+        def run(self):
+            runs.append(self.n)
+            if self.n == 2:
+                quitting.set()  # the user chose 終了 on the second icon
+
+        def stop(self):
+            pass
+
+    class FakeWatch:
+        def __init__(self, on_change):
+            pass
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+    counter = iter(range(1, 10))
+    app.run_redocking(lambda: FakeIcon(next(counter)), quitting, watch_factory=FakeWatch)
+    assert runs == [1, 2]

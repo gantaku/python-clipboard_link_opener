@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 from typing import Callable
 
@@ -219,6 +220,56 @@ class X11Clipboard:
             log.exception("_NET_WM_PID lookup failed")
             return None
         return int(prop.value[0]) if prop is not None and len(prop.value) else None
+
+
+class TrayHostWatch(threading.Thread):
+    """Call ``on_change`` once when a new X11 tray host takes over.
+
+    The host owns the ``_NET_SYSTEM_TRAY_S<screen>`` selection. A different
+    non-zero owner than the one at start means the icon must be docked again.
+    """
+
+    POLL_SECONDS = 2.0
+
+    def __init__(self, on_change: Callable[[], None], owner: Callable[[], int] | None = None):
+        super().__init__(name="tray-host-watch", daemon=True)
+        self._on_change = on_change
+        self._owner = owner
+        self._stop_event = threading.Event()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+
+    def run(self) -> None:
+        disp = None
+        try:
+            owner = self._owner
+            if owner is None:
+                disp, owner = _tray_owner_reader()
+            first = owner()
+            while not self._stop_event.wait(self.POLL_SECONDS):
+                current = owner()
+                if current and current != first:
+                    self._on_change()
+                    return
+        except Exception:  # never take the app down over the icon
+            log.exception("tray host watch failed")
+        finally:
+            if disp is not None:
+                disp.close()
+
+
+def _tray_owner_reader():
+    from Xlib import display
+
+    disp = display.Display()
+    selection = disp.intern_atom(f"_NET_SYSTEM_TRAY_S{disp.get_default_screen()}")
+
+    def owner() -> int:
+        found = disp.get_selection_owner(selection)
+        return getattr(found, "id", found) or 0
+
+    return disp, owner
 
 
 def exe_name(pid: int, readlink: Callable[[str], str] = os.readlink) -> str | None:

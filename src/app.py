@@ -237,7 +237,10 @@ def run_tray(
     def open_file(path: Path):
         return lambda _icon, _item: open_with_default_app(path)
 
+    quitting = threading.Event()
+
     def quit_app(icon, _item):
+        quitting.set()
         if watcher is not None:
             watcher.stop()
         icon.stop()
@@ -251,7 +254,41 @@ def run_tray(
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("終了", quit_app),
     )
-    pystray.Icon("clipboard_link_opener", make_icon_image(False), title, menu).run()
+
+    def new_icon():
+        paused = handler.paused.is_set()
+        shown = f"{title}（一時停止中）" if paused else title
+        return pystray.Icon("clipboard_link_opener", make_icon_image(paused), shown, menu)
+
+    if IS_WINDOWS or not uses_x11_tray(pystray):
+        new_icon().run()
+        return
+    run_redocking(new_icon, quitting)
+
+
+def uses_x11_tray(pystray) -> bool:
+    return getattr(pystray.Icon, "__module__", "") == "pystray._xorg"
+
+
+def run_redocking(new_icon, quitting: threading.Event, watch_factory=None) -> None:
+    """Run an X11 tray icon, recreating it whenever the tray host is replaced.
+
+    GNOME rebuilds its tray (e.g. around the lock screen); pystray tries to
+    re-dock only once, at that moment, and the icon stays gone afterwards.
+    """
+    if watch_factory is None:
+        from src.watcher_x11 import TrayHostWatch as watch_factory
+    while not quitting.is_set():
+        icon = new_icon()
+        watch = watch_factory(on_change=icon.stop)
+        watch.start()
+        try:
+            icon.run()
+        finally:
+            watch.stop()
+        if not quitting.is_set():
+            log.info("tray host changed; showing the icon again")
+            quitting.wait(1.0)
 
 
 def main() -> int:
