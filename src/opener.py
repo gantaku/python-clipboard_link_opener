@@ -16,13 +16,18 @@ from src.policy import Decision
 # Only system directories: a bare name would also search the current directory and ~/.local/bin.
 SYSTEM_BIN_PATH = "/usr/local/bin:/usr/bin:/bin"
 FILE_MANAGER_TIMEOUT = 5.0
+# Linux: HTML goes to Chrome by name, not to whatever claimed text/html (ChatGPT did).
+HTML_SUFFIXES = (".html", ".htm", ".xhtml")
+BROWSERS = ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser")
+TEXT_EDITOR = "gedit"
 
 
 @dataclass(frozen=True)
 class LaunchPlan:
     # "shell": os.startfile(arg) / xdg-open arg; "exec": subprocess.Popen(arg) without a shell;
-    # "reveal" (Linux): select arg in the file manager over D-Bus, else open its folder
-    kind: Literal["shell", "exec", "reveal"]
+    # Linux only: "reveal": select arg in the file manager over D-Bus, else open its folder;
+    # "browser": open the URI arg in Chrome; "editor": gedit with the arguments in arg
+    kind: Literal["shell", "exec", "reveal", "browser", "editor"]
     arg: str | tuple[str, ...]
 
 
@@ -42,6 +47,10 @@ def plan_launch(decision: Decision, vaults: tuple[Path, ...]) -> LaunchPlan | No
         if not IS_WINDOWS:
             return LaunchPlan("reveal", path)
         return LaunchPlan("exec", (_explorer(), "/select,", path))
+    if not IS_WINDOWS:
+        posix = _plan_posix_file(path, target.path.suffix.lower(), target.line, vaults)
+        if posix is not None:
+            return posix
     if target.line is not None:
         # A URI instead of code.cmd: batch files re-parse arguments (& | ^).
         uri_path = _uri_path(path)
@@ -50,6 +59,20 @@ def plan_launch(decision: Decision, vaults: tuple[Path, ...]) -> LaunchPlan | No
     if target.path.suffix.lower() == ".md" and _in_any(path, vaults):
         return LaunchPlan("shell", "obsidian://open?path=" + quote(path, safe=""))
     return LaunchPlan("shell", path)
+
+
+def _plan_posix_file(
+    path: str, suffix: str, line: int | None, vaults: tuple[Path, ...]
+) -> LaunchPlan | None:
+    # Markdown never goes to VS Code: Obsidian inside a vault (the line is dropped),
+    # else a plain text editor, since Obsidian cannot open files outside its vaults.
+    if suffix == ".md":
+        if _in_any(path, vaults):
+            return LaunchPlan("shell", "obsidian://open?path=" + quote(path, safe=""))
+        return LaunchPlan("editor", (path,) if line is None else (f"+{line}", path))
+    if suffix in HTML_SUFFIXES and line is None:
+        return LaunchPlan("browser", "file://" + quote(path, safe="/"))
+    return None
 
 
 def launch(plan: LaunchPlan) -> None:
@@ -67,6 +90,10 @@ def _launch_posix(plan: LaunchPlan) -> None:
     elif plan.kind == "reveal":
         if not _show_in_file_manager(plan.arg):
             _spawn((_system_command("xdg-open"), os.path.dirname(plan.arg)))
+    elif plan.kind == "browser":
+        _spawn((_first_command(BROWSERS), plan.arg))
+    elif plan.kind == "editor":
+        _spawn((_system_command(TEXT_EDITOR), *plan.arg))
     else:
         _spawn(plan.arg)
 
@@ -110,6 +137,16 @@ def _system_command(name: str) -> str:
     if found is None:
         raise OSError(f"{name} not found in {SYSTEM_BIN_PATH}")
     return found
+
+
+def _first_command(names: tuple[str, ...]) -> str:
+    # No fallback to xdg-open: that is the handler which picked the wrong app.
+    for name in names:
+        try:
+            return _system_command(name)
+        except OSError:
+            continue
+    raise OSError(f"none of {', '.join(names)} found in {SYSTEM_BIN_PATH}")
 
 
 def _explorer() -> str:
