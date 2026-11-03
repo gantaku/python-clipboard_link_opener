@@ -194,7 +194,7 @@ def test_new_obsidian_vault_is_picked_up(env):
     write(config, {"allowed_roots": ["~/work"], "source_apps": []})
     handler = app.Handler(config, home)
     handler("~/work/n.md")
-    assert not launched[-1].arg.startswith("obsidian://")
+    assert not str(launched[-1].arg).startswith("obsidian://")
     write(obsidian, {"vaults": {"v": {"path": str(home / "work")}}}, bump=5)
     handler._dedup = Deduper(window=0)  # same path again right away
     handler("~/work/n.md")

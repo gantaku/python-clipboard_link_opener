@@ -276,7 +276,24 @@ def test_line_uses_vscode_uri():
 
 def test_markdown_in_vault_opens_obsidian_case_sensitively():
     assert plan("open", Path("/home/me/knowledge/a b.md")).arg.startswith("obsidian://open?path=%2Fhome")
-    assert plan("open", Path("/home/me/Knowledge/a.md")).arg == "/home/me/Knowledge/a.md"
+    assert plan("open", Path("/home/me/Knowledge/a.md")) == LaunchPlan(
+        "editor", ("/home/me/Knowledge/a.md",)
+    )
+
+
+def test_markdown_never_goes_to_vscode():
+    assert plan("open", Path("/home/me/knowledge/a.md"), line=12).arg.startswith("obsidian://")
+    assert plan("open", Path("/home/me/a.md"), line=12) == LaunchPlan(
+        "editor", ("+12", "/home/me/a.md")
+    )
+
+
+def test_html_goes_to_the_browser_by_name():
+    assert plan("open", Path("/home/me/a b.HTML")) == LaunchPlan(
+        "browser", "file:///home/me/a%20b.HTML"
+    )
+    assert plan("open", Path("/home/me/a.htm")).kind == "browser"
+    assert plan("open", Path("/home/me/a.html"), line=3).arg.startswith("vscode://")
 
 
 @pytest.fixture
@@ -292,6 +309,22 @@ def test_launch_runs_xdg_open_without_a_shell(spawned):
     args, kwargs = spawned[0]
     assert args == ["/usr/bin/xdg-open", "https://example.com/a?b=1&c=2"]
     assert not kwargs.get("shell")
+
+
+def test_browser_and_editor_launch_by_name(spawned):
+    opener.launch(LaunchPlan("browser", "file:///home/me/a.html"))
+    opener.launch(LaunchPlan("editor", ("+3", "/home/me/a.md")))
+    assert spawned[0][0] == ["/usr/bin/google-chrome", "file:///home/me/a.html"]
+    assert spawned[1][0] == ["/usr/bin/gedit", "+3", "/home/me/a.md"]
+
+
+def test_missing_browser_does_not_fall_back_to_xdg_open(monkeypatch):
+    def missing(name):
+        raise OSError(name)
+
+    monkeypatch.setattr(opener, "_system_command", missing)
+    with pytest.raises(OSError):
+        opener.launch(LaunchPlan("browser", "file:///home/me/a.html"))
 
 
 def test_reveal_calls_show_items_with_an_encoded_uri(spawned, monkeypatch):

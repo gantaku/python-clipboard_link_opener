@@ -65,6 +65,7 @@ def test_markdown_vault_match_is_case_insensitive():
     assert plan_launch(decision("open", path), VAULTS).arg.startswith("obsidian://")
 
 
+@windows_only
 def test_markdown_outside_vault_uses_default_app():
     path = Path(r"C:\Users\me\workspaces\README.md")
     assert plan_launch(decision("open", path), VAULTS) == LaunchPlan(
@@ -72,6 +73,7 @@ def test_markdown_outside_vault_uses_default_app():
     )
 
 
+@windows_only
 def test_markdown_with_line_prefers_vscode():
     path = Path(r"C:\Users\me\knowledge\a.md")
     assert plan_launch(decision("open", path, line=3), VAULTS).arg.startswith(
